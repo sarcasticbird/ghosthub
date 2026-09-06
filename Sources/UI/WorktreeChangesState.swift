@@ -83,7 +83,7 @@ public struct WorktreeChangesIdentity: Hashable, Sendable {
     ) -> Bool {
         if usesWindowsPaths {
             return path.range(
-                of: #"^[A-Za-z]:[\\/]"#,
+                of: #"^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+(?:[\\/]|$))"#,
                 options: .regularExpression
             ) != nil
         }

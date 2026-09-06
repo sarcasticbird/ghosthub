@@ -319,8 +319,16 @@ struct WorktreeChangesLoaderAuthorityTests {
     }
 
     @MainActor
-    @Test("Windows refresh accepts equivalent paths and reads the original inventory spelling")
-    func windowsRefreshPreservesReadPath() async throws {
+    @Test(
+        "Windows refresh accepts equivalent paths and reads the original inventory spelling",
+        arguments: [
+            (#"C:\Worktrees\Topic"#, "c:/worktrees/topic"),
+            (#"\\server\share\Topic"#, "//SERVER/share/topic"),
+            ("//server/share", #"\\SERVER\Share"#),
+            (#"\\wsl.localhost\Ubuntu\repo"#, "//WSL.LOCALHOST/ubuntu/repo"),
+        ]
+    )
+    func windowsRefreshPreservesReadPath(path: String, requestedPath: String) async throws {
         let fixture = makeFixture()
         let localHost = HostSummary.fixture()
         var snapshot = fixture.snapshot
@@ -328,9 +336,9 @@ struct WorktreeChangesLoaderAuthorityTests {
         snapshot.hosts[0].platform = .windows
         snapshot.hosts[0].sshDestination = "user-a@builder.example.test"
         snapshot.hosts.append(localHost)
-        snapshot.worktrees[0].path = #"C:\Worktrees\Topic"#
+        snapshot.worktrees[0].path = path
         var requested = snapshot.worktrees[0]
-        requested.path = "c:/worktrees/topic"
+        requested.path = requestedPath
         let paths = LockedValue<[String]>([])
         let model = try makeModel(
             database: try WorkspaceDatabase.inMemory(),
@@ -345,8 +353,8 @@ struct WorktreeChangesLoaderAuthorityTests {
             }
         )
         let result = try await model.loadWorktreeChanges(requested)
-        #expect(paths.load() == [#"C:\Worktrees\Topic"#])
-        #expect(result.path == #"C:\Worktrees\Topic"#)
+        #expect(paths.load() == [path])
+        #expect(result.path == path)
         await model.shutdown()
     }
 

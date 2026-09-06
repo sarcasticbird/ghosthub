@@ -346,6 +346,9 @@ struct WorktreeChangesStateTests {
     @Test("Windows path spelling changes retain polling identity and cached files", arguments: [
         (#"C:\Worktrees\Topic"#, "c:/worktrees/topic"),
         (#"C:\Worktrees\Σ"#, "c:/worktrees/ς"),
+        (#"\\server\share\Topic"#, "//SERVER/share/topic"),
+        ("//server/share", #"\\SERVER\Share"#),
+        (#"\\wsl.localhost\Ubuntu\repo"#, "//WSL.LOCALHOST/ubuntu/repo"),
     ])
     func windowsPathRefreshRetainsIdentity(path: String, refreshedPath: String) throws {
         let fixture = try changesFixture()
@@ -415,6 +418,19 @@ struct WorktreeChangesStateTests {
         )
 
         #expect(identity.matches(result: result, in: snapshot))
+    }
+
+    @Test("Windows identity rejects relative and incomplete UNC paths", arguments: [
+        "repo/topic", #"C:repo\topic"#, #"\repo\topic"#, #"\\server"#, "//server/",
+    ])
+    func windowsIdentityRejectsIncompletePath(path: String) throws {
+        let fixture = try changesFixture()
+        var snapshot = fixture.snapshot
+        snapshot.hosts[0].platform = .windows
+        snapshot.worktrees[0].path = path
+        #expect(WorktreeChangesIdentity.resolve(
+            worktreeID: fixture.worktree.id, in: snapshot
+        ) == nil)
     }
 
     @Test("identity changes when the resolved host route changes")
