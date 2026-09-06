@@ -2773,12 +2773,20 @@ final class WorkspaceSceneModel: ObservableObject {
                   worktree.path, requested.path,
                   usesWindowsPaths: snapshot.host(id: worktree.hostID)?.platform == .windows
               ),
-              worktree.generation == requested.generation
+              worktree.generation == requested.generation,
+              let capturedHost = snapshot.host(id: worktree.hostID),
+              let capturedTarget = CommandHostResolver.resolve(capturedHost)
         else {
             throw KwtWorktreeError.worktreeUnavailable
         }
         do {
             try await ensureRemoteKwtForOperation(hostID: worktree.hostID)
+            guard let currentHost = snapshot.host(id: worktree.hostID),
+                  currentHost.platform == capturedHost.platform,
+                  CommandHostResolver.resolve(currentHost) == capturedTarget
+            else {
+                throw KwtWorktreeError.worktreeUnavailable
+            }
             return try await WorktreeChangesLoaderAuthority.load(
                 requested: requested,
                 in: snapshot,

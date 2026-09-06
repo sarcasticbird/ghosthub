@@ -1,5 +1,7 @@
+import Combine
 import Foundation
 import GhosthubPersistence
+import GhosthubSettings
 import GhosthubTransport
 import GhosthubTmux
 import GhosthubUI
@@ -228,6 +230,76 @@ struct WorktreeChangesLoaderAuthorityTests {
 
         #expect(result == expected)
         #expect(events.load() == ["provision", "read"])
+        await model.shutdown()
+    }
+
+    @MainActor
+    @Test(
+        "changed-file loads reject hosts changed during provisioning even after inventory returns",
+        arguments: [
+            ("user-a@builder.example.test:2222", HostPlatform.linux),
+            ("user-a@builder.example.test", HostPlatform.macOS),
+        ]
+    )
+    func hostChangedDuringProvisioning(destination: String, platform: HostPlatform) async throws {
+        let fixture = makeFixture()
+        let localHost = HostSummary.fixture()
+        var remoteHost = fixture.snapshot.hosts[0]
+        remoteHost.kind = .remote
+        remoteHost.platform = .linux
+        remoteHost.configKey = "builder"
+        remoteHost.sshDestination = "user-a@builder.example.test"
+        let configuredHost = SSHHost(
+            configKey: remoteHost.configKey, name: remoteHost.name,
+            platform: remoteHost.platform,
+            sshDestination: try #require(remoteHost.sshDestination)
+        )
+        let configuredHosts = CurrentValueSubject<[SSHHost], Never>([configuredHost])
+        let inventory = WorkspaceTmuxTestSupport.inventory(
+            project: fixture.project, worktrees: [fixture.worktree]
+        )
+        let snapshot = KwtSnapshotMerger.merge(
+            inventory, hostID: remoteHost.id,
+            into: .fixture(hosts: [localHost, remoteHost])
+        )
+        let worktree = try #require(snapshot.worktrees.first)
+        let provisioningGate = AsyncGate()
+        let reads = LockedValue(0)
+        let model = try makeModel(
+            database: try WorkspaceDatabase.inMemory(),
+            localHostID: localHost.id,
+            snapshot: snapshot,
+            kwtRemoteProvisioner: { host in
+                #expect(host == configuredHost)
+                await provisioningGate.wait()
+            },
+            kwtWorktreeChangesReader: { path, repository, generation, _, _ in
+                reads.withLock { $0 += 1 }
+                return WorktreeFileChanges(
+                    repository: repository, path: path, generation: generation,
+                    state: .clean, summary: .clean, files: [], observedAt: "now"
+                )
+            },
+            configuredSSHHostsProvider: { configuredHosts.value }
+        )
+        let read = Task { try await model.loadWorktreeChanges(worktree) }
+        await provisioningGate.waitUntilWaiting()
+        configuredHosts.send([SSHHost(
+            configKey: configuredHost.configKey, name: configuredHost.name,
+            platform: platform, sshDestination: destination
+        )])
+        model.refreshHosts()
+        #expect(model.snapshot.worktrees.isEmpty)
+        model.snapshot = KwtSnapshotMerger.merge(
+            inventory, hostID: remoteHost.id, into: model.snapshot
+        )
+        #expect(model.snapshot.worktree(id: worktree.id)?.generation == worktree.generation)
+        provisioningGate.open()
+
+        await #expect(throws: KwtWorktreeError.worktreeUnavailable) {
+            try await read.value
+        }
+        #expect(reads.load() == 0)
         await model.shutdown()
     }
 
